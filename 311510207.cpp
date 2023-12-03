@@ -13,7 +13,7 @@
 #include <algorithm>
 #include <set>
 using namespace std;
-
+// @b
 bool inCommentBlock = false;
 vector<double> lib_index1,lib_index2;
 
@@ -33,14 +33,16 @@ struct table_inf{
                  rise_transition(7, vector<double>(7)) ,
                  fall_transition(7, vector<double>(7)) {}
 };
+table_inf INVX1,NOR2X1,NANDX1;
 
 
 typedef struct gate_info gate_info;
 struct node_info{
     double cap ;
-    double rise_transition;
-    double fall_transition;
+    double transition;
+    double acc_delay;
     bool valid ;  // transition is valid 
+    bool cs ;
     gate_info* gate_ptr ;// node 指向 gate的指標
    //map<string, node_info>::iterator in_1;
 };
@@ -48,11 +50,14 @@ struct node_info{
 struct gate_info{
     string name;
     string gate_type;
-    string cap ;// out cap
-    double rise_power;
-    double fall_power;
-    double delay_rise;
-    double delay_fall; //delay
+    double cap ;// out cap
+    double power;
+    double sw_power;
+    double delay; //delay
+    double transition;
+    double toggle_time ;
+    bool toggle;
+    bool cs;
   //  string in_1;
     //string in_2;
    // string out;
@@ -62,7 +67,11 @@ struct gate_info{
 
 
 };
-
+struct gate_delay {
+    double delay=0;
+    double transition_time=0;
+    double power ;
+};
 
 
 // struct nnode_size {
@@ -160,13 +169,9 @@ void sortgate( gate_info* gate_ptr) {
         if (it != gate_set.end()) {
              //cout << "inv previos in_1 "<<node_ptr1->second.gate_ptr->name  <<endl;
             sortgate(node_ptr1->second.gate_ptr);
-           
         }
-
         // 遞歸處理原本的gate
             sortgate(gate_ptr);
-
-
         // cout <<"gate complete:  " << gate_ptr->name<<endl ;
         // 遞歸處理原本的gate
       //  sortgate(gate_ptr);
@@ -218,6 +223,207 @@ void sortgate( gate_info* gate_ptr) {
        
     }
 }
+vector<double> interp_point (vector<double> index , double in){
+    vector<double> vector_double ;
+    if(in < index[0]){
+        vector_double.push_back(0);
+        vector_double.push_back(1);
+    }
+    if(in > index[index.size()-1]){
+        vector_double.push_back(index.size()-2); 
+        vector_double.push_back(index.size()-1); 
+    }
+    for(int i=0 ; i< (index.size()-1) ;i++){  
+        if(( index[i]<in)&&(in<index[i+1])) { 
+            vector_double.push_back(i); 
+            vector_double.push_back(i+1); 
+
+            break ;
+        }
+        if( index[i]==in) { 
+            vector_double.push_back(i); 
+            vector_double.push_back(i); 
+            break ;
+        }
+        else if( index[i+1]==in) {
+            vector_double.push_back(i+1); 
+            vector_double.push_back(i+1); 
+            break ;
+        }
+    }
+    return vector_double;
+}
+
+double interp1(double x0, double y0, double x1, double y1, double x) {
+    double y =0  ;
+    if (x0 == x1) {
+        y = y0 ;
+        return y ;
+    }
+    else {
+    double y = y0 + (y1 - y0) * (x - x0) / (x1 - x0);
+     return y;
+    }
+}
+
+double interp2(double x0, double y0 ,double x1, double y1,double z0 ,double z1 , double z2 ,  double z3, double x ,double y ) { 
+    double a0 ,a1;
+    double z ;
+    a0 = interp1(x0 , z0 , x1 , z2 , x) ;
+    a1 = interp1(x0 , z1 , x1 , z3 , x) ;
+    z  = interp1(y0 , a0 , y1 , a1 , y) ;
+    return z; 
+}
+
+gate_delay caculate_delay (const double input_transition , const double cap ,const string gate_name ,const bool logic ){
+    gate_delay ans;
+    vector<double> i;
+    vector<double> j;
+    double delay , output_transition  ,power;
+    double x0 , x1 , y0 , y1 , z0 , z1 , z2 , z3 , x , y;
+    i =  interp_point (lib_index2 , input_transition);  //lib_index2 index_input_transition_time
+    j = interp_point (lib_index1 , cap);  //index_1 total_output_net_capacitance
+    x0 =  lib_index2[i[0]];
+    x1 =  lib_index2[i[1]];
+    y0 = lib_index1[j[0]];
+    y1 = lib_index1[j[1]];
+    x = input_transition;
+    y= cap;
+    if(gate_name == "INVX1"){
+        if(logic==1){
+            z0 = INVX1.cell_rise[i[0]][j[0]];
+            z1 = INVX1.cell_rise[i[0]][j[1]];
+            z2 = INVX1.cell_rise[i[1]][j[0]];
+            z3 = INVX1.cell_rise[i[1]][j[1]];
+        }
+        else{
+            z0 = INVX1.cell_fall[i[0]][j[0]];
+            z1 = INVX1.cell_fall[i[0]][j[1]];
+            z2 = INVX1.cell_fall[i[1]][j[0]];
+            z3 = INVX1.cell_fall[i[1]][j[1]];
+        }
+        delay = interp2( x0,  y0 , x1,  y1, z0 , z1 ,  z2 ,   z3,  x , y);
+
+        if(logic==1){
+            z0 = INVX1.rise_transition[i[0]][j[0]];
+            z1 = INVX1.rise_transition[i[0]][j[1]];
+            z2 = INVX1.rise_transition[i[1]][j[0]];
+            z3 = INVX1.rise_transition[i[1]][j[1]];
+        }
+        else {
+            z0 = INVX1.fall_transition[i[0]][j[0]];
+            z1 = INVX1.fall_transition[i[0]][j[1]];
+            z2 = INVX1.fall_transition[i[1]][j[0]];
+            z3 = INVX1.fall_transition[i[1]][j[1]];
+        }
+        output_transition = interp2( x0,  y0 , x1,  y1, z0 , z1 ,  z2 ,   z3,  x , y);
+
+        if(logic==1){
+            z0 = INVX1.rise_power[i[0]][j[0]];
+            z1 = INVX1.rise_power[i[0]][j[1]];
+            z2 = INVX1.rise_power[i[1]][j[0]];
+            z3 = INVX1.rise_power[i[1]][j[1]];
+        }
+        else {
+            z0 = INVX1.fall_power[i[0]][j[0]];
+            z1 = INVX1.fall_power[i[0]][j[1]];
+            z2 = INVX1.fall_power[i[1]][j[0]];
+            z3 = INVX1.fall_power[i[1]][j[1]];
+        }
+        power = interp2( x0,  y0 , x1,  y1, z0 , z1 ,  z2 ,   z3,  x , y);
+    }
+
+    else if(gate_name == "NOR2X1"){
+        if(logic==1){
+            z0 = NOR2X1.cell_rise[i[0]][j[0]];
+            z1 = NOR2X1.cell_rise[i[0]][j[1]];
+            z2 = NOR2X1.cell_rise[i[1]][j[0]];
+            z3 = NOR2X1.cell_rise[i[1]][j[1]];
+        }
+        else{
+            z0 = NOR2X1.cell_fall[i[0]][j[0]];
+            z1 = NOR2X1.cell_fall[i[0]][j[1]];
+            z2 = NOR2X1.cell_fall[i[1]][j[0]];
+            z3 = NOR2X1.cell_fall[i[1]][j[1]];
+        }
+        delay = interp2( x0,  y0 , x1,  y1, z0 , z1 ,  z2 ,   z3,  x , y);
+
+        if(logic==1){
+            z0 = NOR2X1.rise_transition[i[0]][j[0]];
+            z1 = NOR2X1.rise_transition[i[0]][j[1]];
+            z2 = NOR2X1.rise_transition[i[1]][j[0]];
+            z3 = NOR2X1.rise_transition[i[1]][j[1]];
+        }
+        else {
+            z0 = NOR2X1.fall_transition[i[0]][j[0]];
+            z1 = NOR2X1.fall_transition[i[0]][j[1]];
+            z2 = NOR2X1.fall_transition[i[1]][j[0]];
+            z3 = NOR2X1.fall_transition[i[1]][j[1]];
+        }
+        output_transition = interp2( x0,  y0 , x1,  y1, z0 , z1 ,  z2 ,   z3,  x , y);
+
+        if(logic==1){
+            z0 = NOR2X1.rise_power[i[0]][j[0]];
+            z1 = NOR2X1.rise_power[i[0]][j[1]];
+            z2 = NOR2X1.rise_power[i[1]][j[0]];
+            z3 = NOR2X1.rise_power[i[1]][j[1]];
+        }
+        else {
+            z0 = NOR2X1.fall_power[i[0]][j[0]];
+            z1 = NOR2X1.fall_power[i[0]][j[1]];
+            z2 = NOR2X1.fall_power[i[1]][j[0]];
+            z3 = NOR2X1.fall_power[i[1]][j[1]];
+        }
+        power = interp2( x0,  y0 , x1,  y1, z0 , z1 ,  z2 ,   z3,  x , y);
+    }
+    else if(gate_name == "NANDX1"){
+        if(logic==1){
+            z0 = NANDX1.cell_rise[i[0]][j[0]];
+            z1 = NANDX1.cell_rise[i[0]][j[1]];
+            z2 = NANDX1.cell_rise[i[1]][j[0]];
+            z3 = NANDX1.cell_rise[i[1]][j[1]];
+        }
+        else{
+            z0 = NANDX1.cell_fall[i[0]][j[0]];
+            z1 = NANDX1.cell_fall[i[0]][j[1]];
+            z2 = NANDX1.cell_fall[i[1]][j[0]];
+            z3 = NANDX1.cell_fall[i[1]][j[1]];
+        }
+        delay = interp2( x0,  y0 , x1,  y1, z0 , z1 ,  z2 ,   z3,  x , y);
+
+        if(logic==1){
+            z0 = NANDX1.rise_transition[i[0]][j[0]];
+            z1 = NANDX1.rise_transition[i[0]][j[1]];
+            z2 = NANDX1.rise_transition[i[1]][j[0]];
+            z3 = NANDX1.rise_transition[i[1]][j[1]];
+        }
+        else {
+            z0 = NANDX1.fall_transition[i[0]][j[0]];
+            z1 = NANDX1.fall_transition[i[0]][j[1]];
+            z2 = NANDX1.fall_transition[i[1]][j[0]];
+            z3 = NANDX1.fall_transition[i[1]][j[1]];
+        }
+        output_transition = interp2( x0,  y0 , x1,  y1, z0 , z1 ,  z2 ,   z3,  x , y);
+
+        if(logic==1){
+            z0 = NANDX1.rise_power[i[0]][j[0]];
+            z1 = NANDX1.rise_power[i[0]][j[1]];
+            z2 = NANDX1.rise_power[i[1]][j[0]];
+            z3 = NANDX1.rise_power[i[1]][j[1]];
+        }
+        else {
+            z0 = NANDX1.fall_power[i[0]][j[0]];
+            z1 = NANDX1.fall_power[i[0]][j[1]];
+            z2 = NANDX1.fall_power[i[1]][j[0]];
+            z3 = NANDX1.fall_power[i[1]][j[1]];
+        }
+        power = interp2( x0,  y0 , x1,  y1, z0 , z1 ,  z2 ,   z3,  x , y);
+    }
+    ans.delay = delay;
+    ans.transition_time = output_transition;
+    ans.power = power;
+    return ans;
+}
 
 ///////////////////////////////////////////////////////////////////
 //                            main.cpp                           //
@@ -225,7 +431,7 @@ void sortgate( gate_info* gate_ptr) {
 
 int main(int argc, char* argv[]){
 	ifstream inFile ,pat,lib;
-    ofstream txt_delay ,txt_capacitance,txt_max_delay , txt_gate ,tx_path; 
+    ofstream txt_capacitance,txt_gate_info ,txt_gate_power ,txt_coverage ; 
     string line;
     string str  ; 
     char ch;
@@ -239,7 +445,7 @@ int main(int argc, char* argv[]){
     // --------------       -read lib        --------------------//
     ///////////////////////////////////////////////////////////////
 
-    table_inf INVX1,NOR2X1,NANDX1;
+    
     lib.open(argv[3]);
     lib_index1.reserve(7);
     lib_index2.reserve(7);
@@ -352,6 +558,7 @@ int main(int argc, char* argv[]){
     set<string> input ,output  ;
     map<string, node_info> node;
     bool output_read, input_read,wire_read =false ;
+
     while (getline(inFile, line)) {
        // line = removeComments(line , inCommentBlock); 
         //cout <<line  <<endl ;
@@ -363,7 +570,7 @@ int main(int argc, char* argv[]){
                 in >> num;
                 str = ch + to_string(num);
                 input.insert(str);
-                node[str] = {0,0,0,true,nullptr};
+                node[str] = {0,0,0,true,false,nullptr};  // cap 、 transition、acc_delay 、 valid 、 cs 、 gate_ptr
                 in >> ch ;  //逗號
                 if (ch == ';')
                 break;
@@ -375,7 +582,7 @@ int main(int argc, char* argv[]){
                 in >> num;
                 str = ch + to_string(num);
                 output.insert(str);
-                node[str] = {0.03,0,0,false,nullptr};
+                node[str] = {0.0300000,0,0,false,false,nullptr};
                 in >> ch ;  //逗號
                 if (ch == ';')
                 break;
@@ -386,7 +593,7 @@ int main(int argc, char* argv[]){
             while (in >> ch){
                 in >> num;  
                 str = ch + to_string(num);
-                node[str] = {0,0,0,false,nullptr};
+                node[str] = {0,0,0,false,false,nullptr};
                 in >> ch ; 
                 if (ch == ';')
                 break;
@@ -415,8 +622,7 @@ int main(int argc, char* argv[]){
     for(auto& pair : node){
         cout << pair.first<<" " ;// easy to debug
         cout << pair.second.cap<<" " ;
-        cout << pair.second.rise_transition<<" ";
-        cout << pair.second.fall_transition<<" ";
+        cout << pair.second.transition<<" ";
         cout << pair.second.valid <<" ";
         cout<<endl;
     }
@@ -431,15 +637,17 @@ int main(int argc, char* argv[]){
    // 讀檔時還用不到的data 先初始 //
     gate_tmp.name = "bad";
     gate_tmp.gate_type = "bad";
-    gate_tmp.cap = " ";
-    gate_tmp.rise_power = 0;
-    gate_tmp.fall_power = 0;
-    gate_tmp.delay_rise = 0;
-    gate_tmp.delay_fall = 0;
+    gate_tmp.cap =0;
+    gate_tmp.power = 0;
+    gate_tmp.delay = 0;
     gate_tmp.in_2  = node.end();//先給空的 這樣可以判斷指標是否合法
     gate_tmp.in_1  = node.end();
     gate_tmp.out  = node.end();
-
+    gate_tmp.cs =  false;
+    gate_tmp.transition = 0;
+    gate_tmp.sw_power=0;
+    gate_tmp.toggle = false;
+    gate_tmp.toggle_time = 0;
     while (getline(inFile, line)) {
         line = removeComments(line , inCommentBlock); 
         //cout <<line <<endl;
@@ -524,8 +732,7 @@ int main(int argc, char* argv[]){
        // auto it = node.find(str);
        // gate[i].cap = it->second.cap;
        db= gate[i].out->second.cap;    
-       db= round(db*1e6) / 1e6;
-       gate[i].cap = to_string(db);
+       gate[i].cap = db;
    } 
 
     for(int i=0; i< gate.size();i++){
@@ -536,9 +743,11 @@ int main(int argc, char* argv[]){
                 cout<< "in_2: " <<gate[i].in_2->first <<", ";
             }
             cout<< "cap: " <<gate[i].cap <<", ";
+            cout<< "state: " <<gate[i].cs <<", ";
            // cout << "out: " << gate[i].out->first ;
            cout<<endl;
    } 
+     inFile.close(); 
 
     ///////////////////////////////////////////////////////////////////
     //          sort                                                // 
@@ -578,21 +787,260 @@ int main(int argc, char* argv[]){
         }
     }
     //}
+   //
+    cout<<"last set "<<endl;
+    for (const auto& element : gate_set) {
+        std::cout << element.second->name << " ";
+    }
+
+   for(int i=0 ; i<gate_order_ptr.size(); i++){
+        cout<<"test: "<< gate_order_ptr[i]->name << endl;
+    }
+    // check gate info //
+     gate_info *temp_ptr;
+    for(auto& pair : node){
+        cout << pair.first<<" " ;// easy to debug
+        temp_ptr = pair.second.gate_ptr;
+        if(temp_ptr != nullptr) cout << temp_ptr->name <<" ";
+        cout << pair.second.cap<<" " ;
+        cout << pair.second.transition<<" ";
+        cout << pair.second.valid <<" ";
+
+        cout<<endl;
+    }
+    
+    ///////////////////////////////////////////////////////////////////
+    //         step2  delay                                      //
+    ///////////////////////////////////////////////////////////////////
+    cout <<endl;
+    cout << "step 2" << endl;
+
+    pat.open(argv[2]);
+    string base_name = argv[2];
+    base_name.pop_back();//t
+    base_name.pop_back();//a
+    base_name.pop_back();//p
+    base_name.pop_back();//.
+    txt_gate_info.open("311510207_"+base_name+"_gate_info.txt");
+    txt_gate_power.open("311510207_"+base_name+"_gate_power.txt");
+    txt_coverage.open("311510207_"+base_name+"_coverage");
+
+    vector<string > pat_inorder;
+    node_info node_in_1,node_in_2 ,node_out;
+    map<string, node_info>::iterator node_out_ptr;
+    pat_inorder.reserve(input.size());
+    gate_delay gate_cal; 
+    double in_transition;
+    double out_cap;
+    double acc_delay;
+    bool    logic;
+    int iii=0;
+
+
+    // 第一行 //
+    getline(pat, line);
+    stringstream in;
+    in << line;
+    in >>str; // input讀出來
+    while (in >> ch){
+        in >> num;
+        str = ch + to_string(num);
+        pat_inorder.push_back(str) ;
+        in >>ch; // 逗號拿掉
+    }
+    //開始一行一行算
+    while (getline(pat, line)) {
+    //for( int i=0 ; i<3 ;i++){ 
+       // cout <<"pat line "<< line <<endl;
+       iii++;
+        if(line == ".end") break;
+        stringstream in;
+        in << line;
+        for(int i=0; i<pat_inorder.size();i++){
+            in>>num;
+            str= pat_inorder[i];
+            node[str].cs = (num==1);
+        }
+        for(int i=0; i<gate_order_ptr.size();i++){  //i<gate_order_ptr.size()  開始一個一個gate算
+            str=  gate_order_ptr[i]->gate_type;
+            node_ptr = gate_order_ptr[i]->in_1;
+            node_in_1 = node_ptr->second;
+            if(str == "INVX1"){
+                logic= !node_in_1.cs;
+              //  cout << " cal  INVX1 " << gate_order_ptr[i]->name <<" "<< node_ptr->first <<" " << node_in_1.cs << " out " <<logic <<endl;
+                in_transition = node_in_1.transition;
+                acc_delay = node_in_1.acc_delay;
+            }
+            else{
+                node_ptr = gate_order_ptr[i]->in_2;
+                node_in_2 = node_ptr->second;
+                if(str == "NANDX1"){
+                    logic = !(node_in_1.cs && node_in_2.cs);
+                    if(logic){
+                        if((node_in_1.cs==0)&&(node_in_2.cs==0))            // 00
+                            if(node_in_1.acc_delay <node_in_2.acc_delay) {   // in_1<in_2
+                                in_transition = node_in_1.transition;       //小的
+                                acc_delay = node_in_1.acc_delay;
+                            }
+                            else{
+                                in_transition = node_in_2.transition;       //min
+                                acc_delay = node_in_2.acc_delay;
+                            }
+                        else if((node_in_2.cs==0)){                         //10
+                            in_transition = node_in_2.transition;
+                            acc_delay = node_in_2.acc_delay;
+                        }
+                        else {                                             //01
+                            in_transition = node_in_1.transition; 
+                            acc_delay = node_in_1.acc_delay;
+                        }
+                    }
+                    else // max                                         //11
+                        if(node_in_1.acc_delay >node_in_2.acc_delay){    // in_1<in_2
+                            in_transition = node_in_1.transition;       //大的
+                            acc_delay = node_in_1.acc_delay;
+                        }
+                        else{
+                             in_transition = node_in_2.transition;
+                             acc_delay = node_in_2.acc_delay;
+                        }
+                }
+                else if(str == "NOR2X1"){
+                    logic = !(node_in_1.cs||node_in_2.cs);
+                  //  cout << " cal  NOR2X1 " << gate_order_ptr[i]->name <<" "<< node_ptr->first <<" "<<  node_in_1.cs << " " << node_in_2.cs << " out " <<logic <<endl;
+                    if(logic){                                         //00
+                        if(node_in_1.acc_delay >node_in_2.acc_delay){    // in_1<in_2
+                            in_transition = node_in_1.transition;       //大的
+                            acc_delay = node_in_1.acc_delay;
+                        }
+                        else{
+                            in_transition = node_in_2.transition;
+                            acc_delay = node_in_2.acc_delay;
+                        }
+                    }
+                    else {// max
+                        if((node_in_1.cs==1)&&(node_in_2.cs==1))            // 11 選min
+                            if(node_in_1.acc_delay <node_in_2.acc_delay){    // in1<in2
+                                in_transition = node_in_1.transition;       //小的
+                                acc_delay = node_in_1.acc_delay;
+                            }
+                            else{
+                                in_transition = node_in_2.transition;  
+                                acc_delay = node_in_2.acc_delay;
+                            }    
+                        else if((node_in_2.cs==1))   {                     //01
+                            in_transition = node_in_2.transition;
+                            acc_delay = node_in_2.acc_delay;
+                        }
+                        else{                                         //10
+                            in_transition = node_in_1.transition; 
+                            acc_delay = node_in_1.acc_delay;
+                        }
+                    }
+                }
+
+            }
+            node_out_ptr =  gate_order_ptr[i]->out;
+            out_cap = node_out_ptr->second.cap;
+            gate_cal = caculate_delay (in_transition , out_cap ,str ,logic );  // caculate_delay(transition , cap , name , logic)
+
+            // 更新node // 
+            node_out_ptr->second.transition = gate_cal.transition_time;    // 紀錄transition_time
+            node_out_ptr->second.acc_delay = acc_delay+gate_cal.delay;// 更新acc_delay
+            node_out_ptr->second.cs = logic;
+
+            //cout << "after cal "<<node_out_ptr->first <<" logic  "<< node_out_ptr->second.cs<<endl;
+
+            // 更新gate // 
+            gate_order_ptr[i]->delay = gate_cal.delay;
+            gate_order_ptr[i]->transition = gate_cal.transition_time;
+            gate_order_ptr[i]->power = gate_cal.power;
+            gate_order_ptr[i]->sw_power = out_cap*0.9*0.9*0.5; //switch power
+            gate_order_ptr[i]->toggle= ( gate_order_ptr[i]->cs !=logic)?1:0;
+            gate_order_ptr[i]->toggle_time= (gate_order_ptr[i]->toggle)? gate_order_ptr[i]->toggle_time+1 : gate_order_ptr[i]->toggle_time;
+            gate_order_ptr[i]->cs = logic;
+        }
+        
+        // total power // 
+        double total_power=0;
+        double total_toggle=0;
+  
+
+        for (int i = 0; i < gate.size(); i++) {
+	    	txt_gate_info<< gate[i].name << " ";
+            txt_gate_info <<fixed << setprecision(6)<< gate[i].cs << " ";
+            txt_gate_info <<fixed << setprecision(6)<< gate[i].delay << " ";
+            txt_gate_info <<fixed << setprecision(6)<< gate[i].transition << " ";
+            txt_gate_info<< endl;
+        }
+        txt_gate_info<< endl;
+
+
+        for (int i = 0; i < gate.size(); i++) {
+            total_power =  (gate[i].toggle)? total_power+gate[i].power+gate[i].sw_power :  total_power+gate[i].power  ;
+            total_toggle = (gate[i].toggle_time >20)? total_toggle:total_toggle+gate[i].toggle_time;
+
+	    	txt_gate_power<< gate[i].name << " ";
+            txt_gate_power <<fixed << setprecision(6)<< gate[i].power << " ";
+            txt_gate_power <<fixed << setprecision(6)<< gate[i].sw_power << " ";
+            txt_gate_power<< endl;
+        }
+        txt_gate_power<< endl;
+
+
+        db = total_toggle/(gate.size()*40)*100;
+        txt_coverage << iii  <<" "<<fixed << setprecision(6)<< total_power<< " ";
+        txt_coverage <<fixed << setprecision(2)<<db <<"%"<<endl;
+        txt_coverage<< endl;
+
+	}
+    txt_gate_info.close();
+    txt_gate_power.close();
+    txt_coverage.close();
+    //cout << "迴圈次數"<<ii <<endl;
+
 
     
 
 
 
-
-
-
-
-        
-    for(int i=0 ; i<gate_order_ptr.size(); i++){
-        cout<<"test"<< gate_order_ptr[i]->name << endl;
+    cout<<"pat_input"<<endl;
+    for(int i=0 ; i<pat_inorder.size(); i++){
+        cout<< pat_inorder[i] << " " ;
     }
+    cout << endl;
+    cout << endl;
 
+    // check node //
+    cout <<"check node " <<endl;
+    for(auto& pair : node){
+        cout << pair.first<<" " ;// easy to debug
+        cout << pair.second.cap<<" " ;
+        cout << pair.second.valid <<" ";
+        cout << pair.second.cs <<" ";
+         cout << pair.second.acc_delay <<" ";
+            cout << pair.second.transition<<" ";
+        cout<<endl;
+    }
+    cout << "node num" << node.size()<<endl;
+    cout << endl;
+    cout << endl;
+    cout <<"gate check " <<endl;
+    for(int i=0; i< gate.size();i++){
+        cout  << "name: " << gate[i].name <<", ";
+            //  <<"gate_type: " << gate[i].gate_type <<", ";
+              //cout<< "in_1: " << gate[i].in_1->first <<", ";
+           // if (gate[i].in_2 != node.end()) {
+               // cout<< "in_2: " <<gate[i].in_2->first <<", ";
+           // }
+           // cout<< "cap: " <<gate[i].cap <<", ";
+            cout<< "state: " <<gate[i].cs <<", ";
+            cout<< "delay: " <<gate[i].delay <<", ";
 
+            cout<< "tran: " <<gate[i].transition <<", ";
+           // cout << "out: " << gate[i].out->first ;
+           cout<<endl;
+   } 
 //   string name;
 //     string gate_type;
 //     double cap ;// out cap
@@ -604,27 +1052,11 @@ int main(int argc, char* argv[]){
 //     string in_2;
 //     string out;
 
-    gate_info *temp_ptr;
-    for(auto& pair : node){
-        cout << pair.first<<" " ;// easy to debug
-        temp_ptr = pair.second.gate_ptr;
-        if(temp_ptr != nullptr) cout << temp_ptr->name <<" ";
-        cout << pair.second.cap<<" " ;
-        cout << pair.second.rise_transition<<" ";
-        cout << pair.second.fall_transition<<" ";
-        cout << pair.second.valid <<" ";
-
-        cout<<endl;
-    }
-     cout<<"last set "<<endl;
-
-    for (const auto& element : gate_set) {
-        std::cout << element.second->name << " ";
-    }
+   
  
 
     // }   
-    //  inFile.close(); 
+    
     //     stringstream in;                                        
     //     for (int i = 0; i < output.size(); i++) {
     //         in << output[i];
@@ -638,13 +1070,13 @@ int main(int argc, char* argv[]){
     //                  write output to txt                       //
     ///////////////////////////////////////////////////////////////
 
-    string base_name = argv[1];
-      base_name.pop_back();
-      base_name.pop_back();
-      txt_capacitance.open("311510207_"+base_name+"_load.txt");
-      for (int i = 0; i < gate.size(); i++) {
+     base_name = argv[1];
+    base_name.pop_back();
+    base_name.pop_back();
+    txt_capacitance.open("311510207_"+base_name+"_load.txt");
+    for (int i = 0; i < gate.size(); i++) {
 	    	txt_capacitance<< gate[i].name << " ";
-            txt_capacitance << gate[i].cap;
+            txt_capacitance <<fixed << setprecision(6) << gate[i].cap;
             txt_capacitance<< endl;
 	}
       txt_capacitance.close();
